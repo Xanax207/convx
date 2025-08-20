@@ -1,0 +1,31 @@
+{
+  "name": "conversation-explorer",
+  "version": "1.0.0",
+  "description": "TUI conversation explorer for Claude Code & OpenCode",
+  "type": "module",
+  "bin": {
+    "convx": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "bun index.ts",
+    "build": "bun build index.ts --outdir dist --target bun",
+    "start": "bun run dist/index.js",
+    "convx": "bun index.ts"
+  },
+  "keywords": ["tui", "terminal", "conversation", "claude", "opencode"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@opentui/core": "^0.1.7",
+    "fast-glob": "^3.3.2",
+    "zod": "^3.22.4",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
