@@ -12,6 +12,7 @@ A terminal UI application that scans local Claude Code and OpenCode conversation
 - **Text wrapping**: Long messages wrap properly in expanded view
 - **Real-time filtering**: Press `/` to filter conversations by project name or session ID
 - **Token estimation**: Shows estimated token counts alongside character counts
+- **Export functionality**: Export conversations to Claude Code (.jsonl) or OpenCode (multi-file) format
 - **Keyboard-driven**: Full keyboard navigation with intuitive shortcuts
 - **Message editing**: Delete messages with 'd' key (be careful!)
 - **Caching**: Intelligent caching system to avoid re-parsing unchanged files
@@ -80,6 +81,7 @@ bun index.ts --debug
 #### Global Controls
 - `Tab` - Toggle focus between conversation list and message list
 - `/` - Enter filter mode to search conversations
+- `e` - Export selected conversation to Claude Code or OpenCode format
 - `Esc` - Exit filter mode or clear selection
 - `r` - Refresh data (re-scan filesystem)
 - `q` or `Ctrl+C` - Exit application
@@ -106,6 +108,21 @@ Messages are automatically classified into types with color coding:
 - **R** (Tool Result) - Tool execution results (pink/red)
 
 In the message list, each message shows a colored letter indicator followed by token count and content preview. Use Enter to expand messages for full content with proper text wrapping.
+
+### Export Feature
+
+The application can export conversations to different formats:
+
+1. **Select a conversation** in the conversation list
+2. **Press `e`** to open the export dialog
+3. **Choose format**:
+   - **Claude Code**: Exports as a single JSONL file in the Claude Code projects directory
+   - **OpenCode**: Exports as multi-file structure in the OpenCode project directory
+4. **Press Enter** to export
+
+Export creates files with proper structure:
+- **Claude Code**: `{sessionId}.jsonl` with one JSON object per line
+- **OpenCode**: Complete directory structure with session info, message files, and part files
 
 ### Size Calculation
 

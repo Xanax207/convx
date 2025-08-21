@@ -144,7 +144,10 @@ export class MessageListRenderable extends Renderable {
           
           for (const wrappedLine of wrappedLines) {
             if (y >= this.height - (hasDownScroll ? 1 : 0)) break;
-            const contentColor = RGBA.fromValues(1, 1, 1, 1); // Normal text color
+            // Use gray for non-user messages in expanded view, white for user messages
+            const contentColor = message.msgType === "user" ? 
+              RGBA.fromValues(1, 1, 1, 1) : // Normal white for user messages
+              RGBA.fromValues(0.6, 0.6, 0.6, 1); // Gray for non-user messages
             buffer.drawText("  " + wrappedLine, 2, y, contentColor);
             y++;
           }
@@ -191,17 +194,21 @@ export class MessageListRenderable extends Renderable {
           // Token count in calculated color
           buffer.drawText(" " + tokenText, 2, y, tokenColor);
           
-          // Rest of content in regular color
+          // Rest of content in regular color - gray for non-user messages, white for user messages
           const textColor = isSelected ? 
             RGBA.fromValues(1, 1, 1, 1) : // White text when selected
-            RGBA.fromValues(0.9, 0.9, 0.9, 1);
+            (message.msgType === "user" ? 
+              RGBA.fromValues(0.9, 0.9, 0.9, 1) : // Normal brightness for user messages
+              RGBA.fromValues(0.6, 0.6, 0.6, 1)); // Grayed out for non-user messages
           const tokenWidth = tokenText.length + 1; // +1 for space
           buffer.drawText(restContent, 2 + tokenWidth, y, textColor);
         } else {
-          // No token info, draw normally
+          // No token info, draw normally - gray for non-user messages, white for user messages
           const textColor = isSelected ? 
             RGBA.fromValues(1, 1, 1, 1) : // White text when selected
-            RGBA.fromValues(0.9, 0.9, 0.9, 1);
+            (message.msgType === "user" ? 
+              RGBA.fromValues(0.9, 0.9, 0.9, 1) : // Normal brightness for user messages
+              RGBA.fromValues(0.6, 0.6, 0.6, 1)); // Grayed out for non-user messages
           buffer.drawText(" " + content, 2, y, textColor);
         }
         y++;
@@ -227,7 +234,12 @@ export class MessageListRenderable extends Renderable {
     
     // Format message content based on type and structure
     if (message.msgType === "user") {
-      // User messages - show the actual text content
+      // User messages - show the actual text content, prefer enhanced content from scanner
+      if (message.raw.content && typeof message.raw.content === "string") {
+        // Use enhanced content from scanner (for OpenCode)
+        return message.raw.content.replace(/\s+/g, " ").trim();
+      }
+      
       if (typeof message.raw === "string") {
         return message.raw.replace(/\s+/g, " ").trim();
       }
@@ -247,14 +259,15 @@ export class MessageListRenderable extends Renderable {
           }
         }
       }
-      
-      if (message.raw.content && typeof message.raw.content === "string") {
-        return message.raw.content.replace(/\s+/g, " ").trim();
-      }
     }
     
     else if (message.msgType === "assistant") {
-      // Assistant messages - show text content
+      // Assistant messages - show text content, prefer enhanced content from scanner
+      if (message.raw.content && typeof message.raw.content === "string") {
+        // Use enhanced content from scanner (for OpenCode)
+        return message.raw.content.replace(/\s+/g, " ").trim();
+      }
+      
       if (message.raw.message?.content) {
         if (typeof message.raw.message.content === "string") {
           return message.raw.message.content.replace(/\s+/g, " ").trim();
@@ -283,7 +296,52 @@ export class MessageListRenderable extends Renderable {
     }
     
     else if (message.msgType === "tool_call") {
-      // Tool calls - show tool name and brief description
+      // Tool calls - handle both Claude Code and OpenCode formats
+      
+      // OpenCode format - check for enhanced content first
+      if (message.raw.content && typeof message.raw.content === "string") {
+        // Parse the enhanced content to extract tool name and input
+        const lines = message.raw.content.split('\n');
+        const toolMatch = lines.find(line => line.startsWith('Tool:'));
+        const inputLineIndex = lines.findIndex(line => line.startsWith('Input:'));
+        
+        if (toolMatch) {
+          const toolName = toolMatch.replace('Tool: ', '');
+          
+          if (inputLineIndex >= 0) {
+            // Extract the JSON from the input line and potentially subsequent lines
+            try {
+              // Get all lines from "Input: " onwards until we hit another section or end
+              const inputLines = [];
+              for (let i = inputLineIndex; i < lines.length; i++) {
+                const line = lines[i];
+                if (i === inputLineIndex) {
+                  // First line: remove "Input: " prefix
+                  inputLines.push(line.replace('Input: ', ''));
+                } else if (line.startsWith('Output:') || line.startsWith('--- Raw JSON')) {
+                  // Stop when we hit the next section
+                  break;
+                } else {
+                  // Continue adding lines that are part of the JSON
+                  inputLines.push(line);
+                }
+              }
+              
+              const inputJson = inputLines.join('\n');
+              const parsed = JSON.parse(inputJson);
+              const args = this.extractToolArgs(toolName, parsed);
+              return args ? `${toolName}: ${args}` : toolName;
+            } catch {
+              // If JSON parsing fails, just show the tool name
+              return toolName;
+            }
+          }
+          
+          return toolName;
+        }
+      }
+      
+      // Claude Code format
       if (message.raw.message?.content && Array.isArray(message.raw.message.content)) {
         const toolParts = message.raw.message.content
           .filter((part: any) => part.type === "tool_use")
@@ -291,6 +349,27 @@ export class MessageListRenderable extends Renderable {
             const toolName = part.name || "Unknown Tool";
             const description = this.getToolDescription(part);
             return description ? `${toolName}: ${description}` : toolName;
+          });
+        
+        if (toolParts.length > 0) {
+          return toolParts.join(", ");
+        }
+      }
+      
+      // Fallback: check for parts array directly
+      if (message.raw.parts && Array.isArray(message.raw.parts)) {
+        const toolParts = message.raw.parts
+          .filter((part: any) => part.type === "tool")
+          .map((part: any) => {
+            const toolName = part.tool || "Unknown Tool";
+            const input = part.state?.input;
+            
+            if (input && typeof input === "object") {
+              const args = this.extractToolArgs(toolName, input);
+              return args ? `${toolName}: ${args}` : toolName;
+            }
+            
+            return toolName;
           });
         
         if (toolParts.length > 0) {
@@ -307,7 +386,9 @@ export class MessageListRenderable extends Renderable {
     }
     
     else if (message.msgType === "tool_result") {
-      // Tool results - show tool name and brief result summary
+      // Tool results - handle both Claude Code and OpenCode formats
+      
+      // Claude Code format
       if (message.raw.message?.content && Array.isArray(message.raw.message.content)) {
         const resultParts = message.raw.message.content
           .filter((part: any) => part.type === "tool_result")
@@ -329,11 +410,121 @@ export class MessageListRenderable extends Renderable {
         }
       }
       
+      // OpenCode format - check for enhanced content first (from scanner)
+      if (message.raw.content && typeof message.raw.content === "string") {
+        // Scanner has already processed the tool parts and created readable content
+        const lines = message.raw.content.split('\n');
+        const toolLines = lines.filter(line => line.startsWith('[TOOL:'));
+        
+        if (toolLines.length > 0) {
+          const summaries = toolLines.map(line => {
+            // Extract tool name and output summary
+            const match = line.match(/\[TOOL: ([^\]]+)\]/);
+            const toolName = match ? match[1] : "Unknown Tool";
+            
+            // Look for output in the content
+            const outputMatch = message.raw.content.match(/Output: ([^\n]+)/);
+            if (outputMatch) {
+              const output = outputMatch[1];
+              const summary = output.length > 50 ? output.substring(0, 50) + "..." : output;
+              return `${toolName}: ${summary}`;
+            }
+            
+            return `${toolName}: [Completed]`;
+          });
+          
+          return summaries.join(", ");
+        }
+      }
+      
+      // Fallback: check for parts array directly
+      if (message.raw.parts && Array.isArray(message.raw.parts)) {
+        const toolParts = message.raw.parts
+          .filter((part: any) => part.type === "tool" && part.state?.status === "completed")
+          .map((part: any) => {
+            const toolName = part.tool || "Unknown Tool";
+            const output = part.state?.output;
+            
+            if (typeof output === "string") {
+              // Clean up output and create summary
+              const cleanOutput = output.replace(/<\/?[^>]+(>|$)/g, "").replace(/\s+/g, " ").trim();
+              const summary = cleanOutput.length > 50 ? cleanOutput.substring(0, 50) + "..." : cleanOutput;
+              return summary ? `${toolName}: ${summary}` : `${toolName}: [Completed]`;
+            }
+            
+            return `${toolName}: [Completed]`;
+          });
+        
+        if (toolParts.length > 0) {
+          return toolParts.join(", ");
+        }
+      }
+      
       return "[Tool Result]";
     }
     
     // Fallback
     return "[Message]";
+  }
+
+  private extractToolArgs(toolName: string, input: any): string {
+    if (!input || typeof input !== "object") return "";
+    
+    // Tool-specific argument extraction
+    switch (toolName.toLowerCase()) {
+      case "read":
+        return input.file_path ? `${input.file_path.split('/').pop()}` : "";
+      
+      case "write":
+        return input.file_path ? `${input.file_path.split('/').pop()}` : "";
+      
+      case "edit":
+        return input.file_path ? `${input.file_path.split('/').pop()}` : "";
+      
+      case "bash":
+        const cmd = input.command || "";
+        return cmd.length > 25 ? cmd.substring(0, 25) + "..." : cmd;
+      
+      case "glob":
+        return input.pattern || "";
+      
+      case "grep":
+        return input.pattern || "";
+      
+      case "todowrite":
+        const todoCount = input.todos?.length || 0;
+        return `${todoCount} todos`;
+      
+      case "webfetch":
+        return input.url ? new URL(input.url).hostname : "";
+      
+      case "websearch":
+        return input.query || "";
+      
+      default:
+        // Generic extraction - look for common parameter names
+        const commonKeys = ['path', 'file_path', 'pattern', 'query', 'command', 'url', 'text', 'content'];
+        for (const key of commonKeys) {
+          if (input[key] && typeof input[key] === "string") {
+            const value = input[key];
+            // For file paths, show just the filename
+            if (key.includes('path') && value.includes('/')) {
+              return value.split('/').pop() || value;
+            }
+            // For other values, truncate if too long
+            return value.length > 25 ? value.substring(0, 25) + "..." : value;
+          }
+        }
+        
+        // If no common keys found, show first string value
+        const firstStringValue = Object.values(input).find(v => typeof v === "string");
+        if (firstStringValue) {
+          const str = firstStringValue as string;
+          return str.length > 25 ? str.substring(0, 25) + "..." : str;
+        }
+        
+        return "";
+    }
   }
 
   private getToolDescription(toolPart: any): string {
@@ -630,9 +821,17 @@ export class MessageListRenderable extends Renderable {
     if (message.msgType === "user") {
       // User messages - show the actual text content
       let content = "";
-      if (typeof message.raw === "string") {
+      
+      // Check if scanner has enhanced content first (for OpenCode)
+      if (message.raw.content && typeof message.raw.content === "string") {
+        content = message.raw.content;
+      }
+      // Check raw string format
+      else if (typeof message.raw === "string") {
         content = message.raw;
-      } else if (message.raw.message?.content) {
+      } 
+      // Claude Code format
+      else if (message.raw.message?.content) {
         if (typeof message.raw.message.content === "string") {
           content = message.raw.message.content;
         } else if (Array.isArray(message.raw.message.content)) {
@@ -641,8 +840,6 @@ export class MessageListRenderable extends Renderable {
             .map((part: any) => part.text);
           content = textParts.join('\n');
         }
-      } else if (message.raw.content && typeof message.raw.content === "string") {
-        content = message.raw.content;
       }
       
       lines.push('Content:');
@@ -652,7 +849,13 @@ export class MessageListRenderable extends Renderable {
     else if (message.msgType === "assistant") {
       // Assistant messages - show response text including thinking
       let content = "";
-      if (message.raw.message?.content) {
+      
+      // Check if scanner has enhanced content first
+      if (message.raw.content && typeof message.raw.content === "string") {
+        content = message.raw.content;
+      }
+      // Claude Code format
+      else if (message.raw.message?.content) {
         if (typeof message.raw.message.content === "string") {
           content = message.raw.message.content;
         } else if (Array.isArray(message.raw.message.content)) {
@@ -678,7 +881,9 @@ export class MessageListRenderable extends Renderable {
     }
     
     else if (message.msgType === "tool_call") {
-      // Tool calls - show tool details
+      // Tool calls - show tool details for both Claude Code and OpenCode formats
+      
+      // Claude Code format
       if (message.raw.message?.content && Array.isArray(message.raw.message.content)) {
         const toolCalls = message.raw.message.content.filter((part: any) => part.type === "tool_use");
         
@@ -699,10 +904,39 @@ export class MessageListRenderable extends Renderable {
           lines.push('');
         }
       }
+      
+      // OpenCode format - use enhanced content from scanner if available
+      else if (message.raw.content && typeof message.raw.content === "string") {
+        // Scanner has already processed tool parts into readable format
+        lines.push('Content:');
+        lines.push(message.raw.content);
+      }
+      
+      // Fallback: parse parts directly
+      else if (message.raw.parts && Array.isArray(message.raw.parts)) {
+        const toolParts = message.raw.parts.filter((part: any) => part.type === "tool");
+        
+        for (const part of toolParts) {
+          lines.push(`Tool: ${part.tool || 'Unknown'}`);
+          lines.push(`Call ID: ${part.callID || 'N/A'}`);
+          
+          if (part.state) {
+            lines.push(`Status: ${part.state.status || 'pending'}`);
+            
+            if (part.state.input) {
+              lines.push('Input:');
+              lines.push(JSON.stringify(part.state.input, null, 2));
+            }
+          }
+          lines.push('');
+        }
+      }
     }
     
     else if (message.msgType === "tool_result") {
-      // Tool results - show output
+      // Tool results - show output for both Claude Code and OpenCode formats
+      
+      // Claude Code format
       if (message.raw.message?.content && Array.isArray(message.raw.message.content)) {
         const results = message.raw.message.content.filter((part: any) => part.type === "tool_result");
         
@@ -720,6 +954,38 @@ export class MessageListRenderable extends Renderable {
             lines.push(result.content);
           } else {
             lines.push(JSON.stringify(result.content, null, 2));
+          }
+          lines.push('');
+        }
+      }
+      
+      // OpenCode format - use enhanced content from scanner if available
+      else if (message.raw.content && typeof message.raw.content === "string") {
+        // Scanner has already processed tool parts into readable format
+        lines.push('Content:');
+        lines.push(message.raw.content);
+      }
+      
+      // Fallback: parse parts directly
+      else if (message.raw.parts && Array.isArray(message.raw.parts)) {
+        const toolParts = message.raw.parts.filter((part: any) => part.type === "tool");
+        
+        for (const part of toolParts) {
+          lines.push(`Tool: ${part.tool || 'Unknown'}`);
+          lines.push(`Call ID: ${part.callID || 'N/A'}`);
+          
+          if (part.state) {
+            lines.push(`Status: ${part.state.status || 'unknown'}`);
+            
+            if (part.state.input) {
+              lines.push('Input:');
+              lines.push(JSON.stringify(part.state.input, null, 2));
+            }
+            
+            if (part.state.output) {
+              lines.push('Output:');
+              lines.push(part.state.output);
+            }
           }
           lines.push('');
         }

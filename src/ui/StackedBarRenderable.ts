@@ -97,6 +97,9 @@ export class StackedBarRenderable extends Renderable {
   protected renderSelf(buffer: OptimizedBuffer): void {
     if (!buffer) return;
     
+    // Clear the entire buffer to prevent ghosting
+    buffer.fillRect(0, 0, this.width, this.height, RGBA.fromValues(0, 0, 0, 1));
+    
     if (!this.session) {
       // Show placeholder text
       const text = "Select a session to view message breakdown";

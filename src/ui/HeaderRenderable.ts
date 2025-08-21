@@ -33,7 +33,8 @@ export class HeaderRenderable extends Renderable {
   protected renderSelf(buffer: OptimizedBuffer): void {
     if (!buffer) return;
     
-    // Don't clear background - let terminal theme show through
+    // Clear the entire buffer to prevent ghosting
+    buffer.fillRect(0, 0, this.width, this.height, RGBA.fromValues(0, 0, 0, 1));
 
     const textColor = RGBA.fromValues(1, 1, 1, 1); // Terminal default foreground
     const maxWidth = Math.max(10, this.width - 2);

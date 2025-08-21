@@ -12,9 +12,13 @@ import { AppStore } from "./state/store.ts";
 import { AccordionRenderable } from "./ui/AccordionRenderable.ts";
 import { StackedBarRenderable } from "./ui/StackedBarRenderable.ts";
 import { HeaderRenderable } from "./ui/HeaderRenderable.ts";
+import { PercentageBarRenderable } from "./ui/PercentageBarRenderable.ts";
 import { MessageListRenderable } from "./ui/MessageListRenderable.ts";
+import { ExportDialogRenderable } from "./ui/ExportDialogRenderable.ts";
+import { StatusBarRenderable } from "./ui/StatusBarRenderable.ts";
 import type { Index, ScanOptions } from "./data/types.ts";
 import { buildIndex, clearCache } from "./data/indexer.ts";
+import { exportSession, type ExportFormat } from "./data/exporter.ts";
 
 export class App extends GroupRenderable {
   private store: AppStore;
@@ -26,13 +30,17 @@ export class App extends GroupRenderable {
   private accordion: AccordionRenderable;
   private header: HeaderRenderable;
   private stackedBar: StackedBarRenderable;
+  private percentageBar: PercentageBarRenderable;
   private messageList: MessageListRenderable;
   private filterInput: InputRenderable;
   private topBox: BoxRenderable;
   private bottomBox: BoxRenderable;
+  private statusBar: StatusBarRenderable;
+  private exportDialog: ExportDialogRenderable | null = null;
   
   // State
   private isFilterMode: boolean = false;
+  private isExportMode: boolean = false;
 
   constructor(scanOptions: ScanOptions, options: RenderableOptions = {}) {
     super("app", {
@@ -129,7 +137,14 @@ export class App extends GroupRenderable {
       flexShrink: 0
     });
 
+    this.percentageBar = new PercentageBarRenderable("percentage-bar", {
+      width: "100%",
+      height: 1,
+      flexShrink: 0
+    });
+
     detailsContent.add(this.header);
+    detailsContent.add(this.percentageBar);
     detailsContent.add(this.stackedBar);
     detailsBox.add(detailsContent);
     rightSection.add(detailsBox);
@@ -163,9 +178,17 @@ export class App extends GroupRenderable {
     this.bottomBox.add(this.messageList);
     this.bottomPane.add(this.bottomBox);
 
-    // Add both panes to main app (vertical layout)
+    // Create status bar at the bottom
+    this.statusBar = new StatusBarRenderable("status-bar", {
+      width: "100%",
+      height: 1,
+      flexShrink: 0
+    });
+
+    // Add all panes to main app (vertical layout)
     this.add(this.topPane);
     this.add(this.bottomPane);
+    this.add(this.statusBar);
 
     // Set initial focus
     this.accordion.focus();
@@ -199,6 +222,11 @@ export class App extends GroupRenderable {
   }
 
   private handleGlobalKeyPress(key: ParsedKey): boolean {
+    // If export dialog is open, let it handle all keys
+    if (this.isExportMode && this.exportDialog) {
+      return this.exportDialog.handleKeyPress(key);
+    }
+
     switch (key.name) {
       case "r":
         this.refreshData();
@@ -218,6 +246,10 @@ export class App extends GroupRenderable {
 
       case "/":
         this.enterFilterMode();
+        return true;
+
+      case "e":
+        this.showExportDialog();
         return true;
 
       case "escape":
@@ -366,6 +398,7 @@ export class App extends GroupRenderable {
       // Update all components when selection changes
       this.header.setSession(state.selectedSession);
       this.stackedBar.setSession(state.selectedSession);
+      this.percentageBar.setSession(state.selectedSession);
       this.messageList.setSession(state.selectedSession);
       
       // Update titles to show focus state
@@ -384,6 +417,77 @@ export class App extends GroupRenderable {
       
       this.needsUpdate();
     });
+  }
+
+  private showExportDialog(): void {
+    const state = this.store.getState();
+    if (!state.selectedSession) {
+      console.log("No session selected for export");
+      return;
+    }
+
+    this.isExportMode = true;
+    this.exportDialog = new ExportDialogRenderable({
+      session: state.selectedSession,
+      claudeRoot: this.scanOptions.claudeRoot,
+      opencodeRoot: this.scanOptions.opencodeRoot,
+      onCancel: () => this.hideExportDialog(),
+      onExport: (format: ExportFormat, outputPath: string) => this.handleExport(format, outputPath)
+    });
+
+    // Position dialog in center of screen
+    this.exportDialog.updatePosition(this.width, this.height);
+    this.add(this.exportDialog);
+    this.exportDialog.focus();
+    this.needsUpdate();
+  }
+
+  private hideExportDialog(): void {
+    console.log("hideExportDialog called");
+    if (this.exportDialog) {
+      console.log("Removing export dialog from UI");
+      this.remove(this.exportDialog);
+      this.exportDialog = null;
+    } else {
+      console.log("No export dialog to remove");
+    }
+    this.isExportMode = false;
+    this.accordion.focus();
+    this.needsUpdate();
+    console.log("Export dialog hidden successfully");
+  }
+
+  private async handleExport(format: ExportFormat, outputPath: string): Promise<void> {
+    const state = this.store.getState();
+    if (!state.selectedSession) {
+      this.statusBar.showMessage("No session selected for export", "error");
+      this.hideExportDialog();
+      return;
+    }
+
+    this.hideExportDialog();
+    this.statusBar.showMessage(`Exporting to ${format}...`, "info");
+
+    try {
+      const result = await exportSession({
+        format,
+        outputPath,
+        session: state.selectedSession
+      });
+
+      if (result.success) {
+        const fileCount = result.filesCreated?.length || 0;
+        this.statusBar.showMessage(`Export successful! Created ${fileCount} files`, "success", 4000);
+        console.log("Files created:", result.filesCreated?.join(", "));
+      } else {
+        this.statusBar.showMessage(`Export failed: ${result.error}`, "error", 5000);
+        console.error("Export failed:", result.error);
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      this.statusBar.showMessage(`Export error: ${errorMsg}`, "error", 5000);
+      console.error("Export error:", error);
+    }
   }
 
   private async refreshData(): Promise<void> {

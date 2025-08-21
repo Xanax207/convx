@@ -93,6 +93,22 @@ export function measureOpenCodeMessage(obj: any, mode: SizeMode = "chars"): numb
     }
   }
 
+  // Handle message.content
+  if (obj.message?.content) {
+    if (typeof obj.message.content === "string") {
+      totalSize += measureText(obj.message.content, mode);
+    } else {
+      totalSize += measureText(JSON.stringify(obj.message.content), mode);
+    }
+  }
+
+  // Skip system messages - they are not part of the actual message content
+
+  // For user messages with minimal content, provide a reasonable default size
+  if (obj.role === "user" && totalSize < 10) {
+    totalSize = 50; // Reasonable estimate for user input
+  }
+
   // Fallback: stringify the whole object if no content found
   if (totalSize === 0) {
     totalSize = measureText(JSON.stringify(obj), mode);

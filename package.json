@@ -1,5 +1,5 @@
 {
-  "name": "conversation-explorer",
+  "name": "convx",
   "version": "1.0.0",
   "description": "TUI conversation explorer for Claude Code & OpenCode",
   "type": "module",
